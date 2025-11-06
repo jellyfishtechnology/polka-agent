@@ -196,8 +196,3 @@ mod agent_registry {
         }
     }
 }
-```
-
-### 4️⃣ Commit con messaggio:
-```
-Fix: Add correct imports and use Mapping storage
