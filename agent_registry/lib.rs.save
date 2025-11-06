@@ -1,0 +1,239 @@
+![cfg_attr(not(feature = "std"), no_std, no_main)]
+
+#[ink::contract]
+mod agent_registry {
+    use ink::storage::Mapping;
+
+    /// Definizione Agent
+    #[derive(Debug, Clone, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
+    pub struct Agent {
+        pub id: u32,
+        pub owner: AccountId,
+        pub name: String,
+        pub description: String,
+        pub price_per_day: Balance,
+        pub active: bool,
+        pub total_rentals: u32,
+    }
+
+    /// Definizione Rental
+    #[derive(Debug, Clone, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo
+))]
+    pub struct RentalInfo {
+        pub renter: AccountId,
+        pub agent_id: u32,
+        pub start_time: Timestamp,
+        pub duration_days: u32,
+        pub amount_paid: Balance,
+    }
+
+    /// Storage principale
+    #[ink(storage)]
+    pub struct AgentRegistry {
+        agents: Mapping<u32, Agent>,
+        next_agent_id: u32,
+        rentals: Mapping<(AccountId, u32), RentalInfo>,
+        owner: AccountId,
+        platform_fee_percent: u8,
+    }
+
+    /// Eventi
+    #[ink(event)]
+    pub struct AgentRegistered {
+        #[ink(topic)]
+        agent_id: u32,
+        #[ink(topic)]
+        owner: AccountId,
+        name: String,
+        price_per_day: Balance,
+    }
+
+    #[ink(event)]
+    pub struct AgentRented {
+        #[ink(topic)]
+        agent_id: u32,
+        #[ink(topic)]
+        renter: AccountId,
+        duration_days: u32,
+        amount_paid: Balance,
+    }
+
+    /// Errori
+    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        AgentNotFound,
+        AgentNotActive,
+        InsufficientPayment,
+        Unauthorized,
+    }
+
+    pub type Result<T> = core::result::Result<T, Error>;
+
+    impl AgentRegistry {
+        /// Constructor
+        #[ink(constructor)]
+        pub fn new(platform_fee_percent: u8) -> Self {
+            Self {
+                agents: Mapping::default(),
+                next_agent_id: 1,
+                rentals: Mapping::default(),
+                owner: Self::env().caller(),
+                platform_fee_percent,
+            }
+        }
+
+        /// Registra nuovo agent
+        #[ink(message)]
+        pub fn register_agent(
+            &mut self,
+            name: String,
+            description: String,
+            price_per_day: Balance,
+        ) -> Result<u32> {
+            let caller = self.env().caller();
+            let agent_id = self.next_agent_id;
+
+            let agent = Agent {
+                id: agent_id,
+                owner: caller,
+                name: name.clone(),
+                description,
+                price_per_day,
+                active: true,
+                total_rentals: 0,
+            };
+
+            self.agents.insert(agent_id, &agent);
+            self.next_agent_id += 1;
+
+            self.env().emit_event(AgentRegistered {
+                agent_id,
+                owner: caller,
+                name,
+                price_per_day,
+            });
+
+            Ok(agent_id)
+        }
+
+        /// Affitta agent
+        #[ink(message, payable)]
+        pub fn rent_agent(
+            &mut self,
+            agent_id: u32,
+            duration_days: u32,
+        ) -> Result<()> {
+            let caller = self.env().caller();
+            let payment = self.env().transferred_value();
+
+            let mut agent = self.agents.get(agent_id).ok_or(Error::AgentNotFound)?;
+
+            if !agent.active {
+                return Err(Error::AgentNotActive);
+            }
+
+            let total_cost = agent.price_per_day
+                .checked_mul(duration_days as u128)
+                .ok_or(Error::InsufficientPayment)?;
+
+            if payment < total_cost {
+                return Err(Error::InsufficientPayment);
+            }
+
+            let fee = total_cost
+                .checked_mul(self.platform_fee_percent as u128)
+                .and_then(|x| x.checked_div(100))
+                .ok_or(Error::InsufficientPayment)?;
+
+            let creator_payment = total_cost.checked_sub(fee).ok_or(Error::InsufficientPayment)?;
+
+            if self.env().transfer(agent.owner, creator_payment).is_err() {
+                return Err(Error::InsufficientPayment);
+            }
+
+            agent.total_rentals += 1;
+            self.agents.insert(agent_id, &agent);
+
+            let rental = RentalInfo {
+                renter: caller,
+                agent_id,
+                start_time: self.env().block_timestamp(),
+                duration_days,
+                amount_paid: total_cost,
+            };
+
+            self.rentals.insert((caller, agent_id), &rental);
+
+            self.env().emit_event(AgentRented {
+                agent_id,
+                renter: caller,
+                duration_days,
+                amount_paid: total_cost,
+            });
+
+            Ok(())
+        }
+
+        /// Get agent info
+        #[ink(message)]
+        pub fn get_agent(&self, agent_id: u32) -> Option<Agent> {
+            self.agents.get(agent_id)
+        }
+
+        /// Get total agents
+        #[ink(message)]
+        pub fn get_total_agents(&self) -> u32 {
+            self.next_agent_id - 1
+        }
+
+        /// Deactivate agent
+        #[ink(message)]
+        pub fn deactivate_agent(&mut self, agent_id: u32) -> Result<()> {
+            let caller = self.env().caller();
+            let mut agent = self.agents.get(agent_id).ok_or(Error::AgentNotFound)?;
+
+            if agent.owner != caller {
+                return Err(Error::Unauthorized);
+            }
+
+            agent.active = false;
+            self.agents.insert(agent_id, &agent);
+
+            Ok(())
+        }
+
+        /// Get rental info
+        #[ink(message)]
+        pub fn get_rental(&self, renter: AccountId, agent_id: u32) -> Option<RentalInfo> {
+            self.rentals.get((renter, agent_id))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[ink::test]
+        fn new_works() {
+            let contract = AgentRegistry::new(5);
+            assert_eq!(contract.get_total_agents(), 0);
+        }
+
+        #[ink::test]
+        fn register_agent_works() {
+            let mut contract = AgentRegistry::new(5);
+            let result = contract.register_agent(
+                String::from("YieldOptimizer"),
+                String::from("Optimizes yield across parachains"),
+                1_000_000_000_000,
+            );
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 1);
+            assert_eq!(contract.get_total_agents(), 1);
+        }
+    }
+}
+
