@@ -60,7 +60,7 @@ mod agent_registry {
         pub fn register_agent(
             &mut self,
             name: String,
-            description: String,
+            _description: String,
             price_per_day: Balance,
         ) -> u32 {
             let agent_id = self.total_agents;
@@ -196,3 +196,8 @@ mod agent_registry {
         }
     }
 }
+```
+
+### 4️⃣ Commit con messaggio:
+```
+Fix: Add correct imports and use Mapping storage
