@@ -37,21 +37,3 @@
     ]
   }
 }
-```
-
-4. **Commit message:** `Add frontend package.json`
-5. Click **"Commit new file"**
-
----
-
-### ✅ DOPO IL PRIMO FILE
-
-Dopo aver creato `frontend/package.json`, **torna alla root del repo** e verifica che vedi:
-```
-polka-agent/
-├── agent_registry/
-├── ai_agents/
-├── frontend/           ✅ NUOVA!
-│   └── package.json    ✅
-├── .gitignore
-└── README.md
