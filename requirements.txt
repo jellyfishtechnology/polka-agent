@@ -1,0 +1,8 @@
+# PolkaAgent - AI Agents Dependencies
+# Python 3.8+
+
+# Future: Real blockchain integration
+# substrate-interface>=1.7.0
+
+# Current: Demo works without external dependencies
+# All functionality uses Python standard library
